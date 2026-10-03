@@ -856,7 +856,7 @@
           turnPhotos: turnPhotos,
           turns: (route.turns || []).length,
           total: samples.length,
-          gifSec: samples.length * delaySec,
+          gifSec: samples.length * delaySec + (samples.length ? Math.max(1, Math.round(1000 / (delaySec * 1000))) * delaySec : 0),
           delaySec: delaySec,
           samples: samples
         };
@@ -983,16 +983,71 @@
         });
       }
       function sectionCounts(idx) {
-        var loaded = 0, filtered = 0, nocov = 0, total = 0, pending = 0;
+        var loaded = 0, filtered = 0, nocov = 0, total = 0, pending = 0, errors = 0;
         S.frames.forEach(function (f) {
           if (f.sectionIndex !== idx) return;
           total++;
           if (f.status === "ok") loaded++;
           else if (f.status === "filtered") filtered++;
-          else if (f.status === "nocov" || f.status === "error") nocov++;
+          else if (f.status === "error") { nocov++; errors++; }
+          else if (f.status === "nocov") nocov++;
           else pending++;
         });
-        return { loaded: loaded, filtered: filtered, nocov: nocov, total: total, pending: pending };
+        return { loaded: loaded, filtered: filtered, nocov: nocov, errors: errors, total: total, pending: pending };
+      }
+      function sectionProgressInfo(idx) {
+        var c = sectionCounts(idx);
+        var total = c.total;
+        var resolved = c.loaded + c.filtered + c.nocov; // errors count as nocov -> resolved-with-error
+        var pending = Math.max(0, total - resolved);
+        var isFetching = !!(S.fetching || S.sectionFetching[idx]);
+        if (total === 0) {
+          return { state: "not-loaded", percent: 0, resolved: 0, total: 0, pending: 0, counts: c, label: "Not loaded yet" };
+        }
+        if (pending === 0) {
+          var doneLabel = "Done · " + c.loaded + " photo" + (c.loaded === 1 ? "" : "s") +
+            (c.filtered ? ", " + c.filtered + " filtered" : "") +
+            (c.nocov ? ", " + c.nocov + " no coverage" : "");
+          return { state: "done", percent: 100, resolved: resolved, total: total, pending: 0, counts: c, label: doneLabel };
+        }
+        if (isFetching) {
+          var pct = total ? Math.round((resolved / total) * 100) : 0;
+          return { state: "loading", percent: pct, resolved: resolved, total: total, pending: pending, counts: c, label: "Loading " + resolved + "/" + total + "…" };
+        }
+        // Frames still pending after fetch finished -> stuck/incomplete, never spin forever
+        var pct2 = total ? Math.round((resolved / total) * 100) : 0;
+        var incLabel = "Incomplete — " + pending + " pending";
+        if (c.loaded) incLabel += " · " + c.loaded + " loaded";
+        if (c.errors) incLabel += " · " + c.errors + " failed";
+        else if (c.nocov) incLabel += " · " + c.nocov + " no coverage";
+        if (c.filtered) incLabel += " · " + c.filtered + " filtered";
+        return { state: "incomplete", percent: pct2, resolved: resolved, total: total, pending: pending, counts: c, label: incLabel };
+      }
+      function updateSectionProgressUI(idx) {
+        var wrap = document.getElementById("sectionProgress-" + idx);
+        if (!wrap) return;
+        var info = sectionProgressInfo(idx);
+        wrap.setAttribute("data-state", info.state);
+        wrap.setAttribute("aria-label", info.label);
+        var fill = wrap.querySelector(".section-progress-fill");
+        if (fill) fill.style.width = info.percent + "%";
+        var track = wrap.querySelector(".section-progress-track");
+        if (track) track.setAttribute("aria-valuenow", String(info.percent));
+        var lab = wrap.querySelector(".section-progress-label");
+        if (lab) lab.textContent = info.label;
+      }
+      function refreshSectionProgressUI() {
+        if (!S.sections) return;
+        S.sections.forEach(function (sec) { updateSectionProgressUI(sec.index); });
+      }
+      function holdExtraCopies(delayMs) {
+        var d = parseInt(delayMs, 10);
+        if (isNaN(d) || d <= 0) d = 250;
+        return Math.max(1, Math.round(1000 / d));
+      }
+      function holdFrameCountForTotal(totalFrames) {
+        // duplicates of last frame only; used for size/length estimates
+        return totalFrames > 0 ? holdExtraCopies(parseInt($("delaySelect").value, 10)) : 0;
       }
       function totalPlannedFrames() {
         if (S.frames && S.frames.length) {
@@ -1028,7 +1083,11 @@
         // Planned total honours per-section overrides once sections exist
         var planned = totalPlannedFrames();
         var displayTotal = planned ? planned.count : est.total;
-        var displayGifSec = displayTotal * currentDelaySec();
+        var delaySecNow = currentDelaySec();
+        var holdCopies = holdFrameCountForTotal(displayTotal);
+        var holdSec = holdCopies * delaySecNow; // ~1s (rounded to frame delay)
+        var displayGifSec = displayTotal * delaySecNow + holdSec;
+        var effectiveFramesForSize = displayTotal + holdCopies;
         var hasActual = planned && planned.fromActual;
         if (estEl) {
           var warn = displayTotal > 250 ? " That is a lot of billed photo requests and a large GIF — lower photos/mi for long routes." : "";
@@ -1038,7 +1097,7 @@
             " + " + est.localPhotos + " local (" + est.localMiles.toFixed(2) + " mi × " + settings.localPpm + "/mi)" +
             " + " + est.guaranteedPhotos + " between-turns" +
             " + " + est.turnPhotos + " turn (" + est.turns + " turn" + (est.turns === 1 ? "" : "s") + " × " + settings.perTurn + ")" +
-            " → " + fmtGifLength(displayGifSec) + " GIF at " + currentDelaySec() + "s/frame." + actualNote + " Headings face the direction of travel; turn photos face into/through/out of each turn, snapped to each panorama." + warn;
+            " → " + fmtGifLength(displayGifSec) + " GIF at " + delaySecNow + "s/frame + 1s hold on last frame." + actualNote + " Headings face the direction of travel; turn photos face into/through/out of each turn, snapped to each panorama." + warn;
         }
         if ($("statInterstate")) $("statInterstate").textContent = est.interstateMiles.toFixed(2) + " mi";
         if ($("statLocal")) $("statLocal").textContent = est.localMiles.toFixed(2) + " mi";
@@ -1046,8 +1105,8 @@
         if ($("statPhotos")) $("statPhotos").textContent = hasActual
           ? displayTotal + " loaded (" + planned.totalSamples + " samples)"
           : "≈ " + displayTotal + " (" + est.interstatePhotos + " I + " + est.localPhotos + " L + " + est.guaranteedPhotos + " between + " + est.turnPhotos + " turn)";
-        if ($("statGif")) $("statGif").textContent = fmtGifLength(displayGifSec) + " @ " + currentDelaySec() + "s";
-        if ($("statGifSize")) $("statGifSize").textContent = fmtGifSize(displayTotal);
+        if ($("statGif")) $("statGif").textContent = fmtGifLength(displayGifSec) + " @ " + delaySecNow + "s + 1s hold";
+        if ($("statGifSize")) $("statGifSize").textContent = fmtGifSize(effectiveFramesForSize) + " incl. hold";
         if ($("statSpace")) {
           $("statSpace").textContent = "I " + settings.interstatePpm + "/mi · L " + settings.localPpm + "/mi · " + settings.perTurn + "/turn";
         }
@@ -1584,9 +1643,10 @@
           sec.overridden = false;
         });
         drawDots();
-        buildFilmstrip();
         S.fetching = true;
         S.cancelFetch = false;
+        buildFilmstrip();
+        refreshSectionProgressUI();
         fetchBtn.disabled = true;
         $("cancelFetchBtn").hidden = false;
         fetchBar.hidden = false;
@@ -1640,6 +1700,7 @@
               ? "not loaded yet"
               : c.loaded + " loaded · " + c.filtered + " filtered · " + c.nocov + " no coverage · " + c.total + " total";
           }
+          updateSectionProgressUI(sec.index);
         });
       }
       function createFrameFigure(f, i) {
@@ -1728,6 +1789,29 @@
           counts.textContent = c0.total === 0 ? "not loaded yet" : c0.loaded + " loaded · " + c0.filtered + " filtered · " + c0.nocov + " no coverage · " + c0.total + " total";
           summary.appendChild(title);
           summary.appendChild(counts);
+          var progWrap = document.createElement("div");
+          progWrap.className = "section-progress";
+          progWrap.id = "sectionProgress-" + sec.index;
+          var progInfo0 = sectionProgressInfo(sec.index);
+          progWrap.setAttribute("data-state", progInfo0.state);
+          progWrap.setAttribute("aria-label", progInfo0.label);
+          var progTrack = document.createElement("div");
+          progTrack.className = "section-progress-track";
+          progTrack.setAttribute("role", "progressbar");
+          progTrack.setAttribute("aria-valuemin", "0");
+          progTrack.setAttribute("aria-valuemax", "100");
+          progTrack.setAttribute("aria-valuenow", String(progInfo0.percent));
+          progTrack.setAttribute("aria-label", "Loading progress for " + sec.label);
+          var progFill = document.createElement("i");
+          progFill.className = "section-progress-fill";
+          progFill.style.width = progInfo0.percent + "%";
+          progTrack.appendChild(progFill);
+          var progLabel = document.createElement("span");
+          progLabel.className = "section-progress-label";
+          progLabel.textContent = progInfo0.label;
+          progWrap.appendChild(progTrack);
+          progWrap.appendChild(progLabel);
+          summary.appendChild(progWrap);
           details.appendChild(summary);
 
           var body = document.createElement("div");
@@ -1810,9 +1894,11 @@
       function refreshSectionCountsUI() {
         S.sections.forEach(function (sec) {
           var el = document.getElementById("sectionCounts-" + sec.index);
-          if (!el) return;
-          var c = sectionCounts(sec.index);
-          el.textContent = c.total === 0 ? "not loaded yet" : c.loaded + " loaded · " + c.filtered + " filtered · " + c.nocov + " no coverage · " + c.total + " total";
+          if (el) {
+            var c = sectionCounts(sec.index);
+            el.textContent = c.total === 0 ? "not loaded yet" : c.loaded + " loaded · " + c.filtered + " filtered · " + c.nocov + " no coverage · " + c.total + " total";
+          }
+          updateSectionProgressUI(sec.index);
         });
       }
       function refetchSection(sectionIdx) {
@@ -2362,9 +2448,12 @@
           var dl = $("downloadBtn");
           dl.href = S.gifUrl;
           dl.setAttribute("download", "route.gif");
-          var meta = okFrames.length + " frames · 640×360 · " +
+          var delayMsForMeta = parseInt($("delaySelect").value, 10) || 250;
+          var holdCopiesMeta = holdExtraCopies(delayMsForMeta);
+          var totalEncoded = okFrames.length + holdCopiesMeta;
+          var meta = okFrames.length + " frames (+" + holdCopiesMeta + " hold) · " + totalEncoded + " encoded · 640×360 · " +
                      (blob.size / 1048576).toFixed(2) + " MB · delay " +
-                     ($("delaySelect").value / 1000) + "s per frame";
+                     ($("delaySelect").value / 1000) + "s per frame + ~1s hold on last frame";
           $("gifMeta").textContent = meta;
           $("resultCard").hidden = false;
           $("resultCard").scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -2407,6 +2496,10 @@
           gif.on("finished", function (blob) { resolve(blob); });
 
           // Add frames one by one so decoding stays sequential and ordered.
+          // Encode-time only: after the real frames, duplicate the last
+          // frame so it holds ~1s before looping. These copies never
+          // enter S.frames / the filmstrip.
+          var extraHoldCopies = holdExtraCopies(delay);
           var chain = Promise.resolve();
           okFrames.forEach(function (f) {
             chain = chain.then(function () {
@@ -2420,6 +2513,10 @@
             });
           });
           chain.then(function () {
+            // canvas still holds the last frame — add hold copies
+            for (var h = 0; h < extraHoldCopies; h++) {
+              gif.addFrame(canvas, { copy: true, delay: delay });
+            }
             setMsg(gifStatus, "Encoding GIF… 0%", "info");
             gif.render();
           }).catch(reject);
