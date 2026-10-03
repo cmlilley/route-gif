@@ -290,6 +290,11 @@
       }
       .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
       .actions .btn { flex: 1 1 auto; }
+      .film-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 10px; }
+      .film-actions .btn { font-size: 0.82rem; padding: 7px 12px; }
+      .copy-status { font-size: 0.82rem; color: var(--muted); }
+      .copy-status.ok { color: var(--ok); font-weight: 600; }
+      .copy-status.error { color: var(--bad); font-weight: 600; }
       .delay-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
       .delay-row label { font-size: 0.85rem; font-weight: 600; white-space: nowrap; }
       .delay-row select { width: auto; flex: 1 1 auto; }
@@ -446,13 +451,6 @@
             </div>
           </section>
 
-          <!-- Filmstrip -->
-          <section class="card" id="filmCard" aria-labelledby="filmTitle" hidden>
-            <h2 id="filmTitle">Frames</h2>
-            <p class="sub" style="margin-left:0" id="filmMeta">Photos in route order.</p>
-            <div class="film-grid" id="filmGrid"></div>
-          </section>
-
           <!-- Result -->
           <section class="card" id="resultCard" aria-labelledby="resultTitle" hidden>
             <h2 id="resultTitle">Your GIF</h2>
@@ -465,6 +463,17 @@
               Download route.gif
             </a>
             <p class="msg info file-meta" id="gifMeta"></p>
+          </section>
+
+          <!-- Filmstrip -->
+          <section class="card" id="filmCard" aria-labelledby="filmTitle" hidden>
+            <h2 id="filmTitle">Frames</h2>
+            <p class="sub" style="margin-left:0" id="filmMeta">Photos in route order.</p>
+            <div class="film-actions">
+              <button class="btn btn-ghost" id="copyDebugBtn" type="button" disabled>Copy frame debug info</button>
+              <span class="copy-status" id="copyDebugStatus" aria-live="polite"></span>
+            </div>
+            <div class="film-grid" id="filmGrid"></div>
           </section>
         </div>
       </div>
@@ -488,7 +497,7 @@
         markers: [],
         dots: [],
         route: null,          // { path:[{lat,lng}], distanceMeters, durationSeconds, description, turns:[{lat,lng,dist,maneuver}], _geom:{cum,total} }
-        frames: [],           // { lat,lng, panoLat,panoLng, heading, finalHeading, kind, turnIndex, turnLat,turnLng,turnDist, dist, status,panoId,date,blob,url }
+        frames: [],           // { lat,lng, panoLat,panoLng, heading, finalHeading, kind, turnIndex, turnLat,turnLng,turnDist, dist, status,panoId,date,copyright,blob,url }
         fetching: false,
         cancelFetch: false,
         generating: false,
@@ -1521,6 +1530,10 @@
         S.frames = [];
         $("filmGrid").innerHTML = "";
         $("filmCard").hidden = true;
+        var dbgBtn = $("copyDebugBtn");
+        if (dbgBtn) dbgBtn.disabled = true;
+        var dbgStatus = $("copyDebugStatus");
+        if (dbgStatus) { dbgStatus.textContent = ""; dbgStatus.className = "copy-status"; }
         clearDots();
         $("gifBtn").disabled = true;
         if (reason) setMsg(fetchStatus, reason, "info");
@@ -1548,7 +1561,7 @@
             turnLat: s.turnLat, turnLng: s.turnLng, turnDist: s.turnDist,
             dist: s.dist,
             status: "pending",
-            panoId: null, date: "", blob: null, url: null
+            panoId: null, date: "", copyright: "", blob: null, url: null
           };
         });
         drawDots();
@@ -1619,6 +1632,8 @@
           grid.appendChild(fig);
         });
         $("filmCard").hidden = false;
+        var dbgBtn2 = $("copyDebugBtn");
+        if (dbgBtn2) dbgBtn2.disabled = S.frames.length === 0;
         updateFilmMeta();
       }
 
@@ -1646,6 +1661,106 @@
           (miss ? " · " + miss + " without coverage" : "") +
           " of " + S.frames.length + " samples, in route order. HDG is the camera heading in degrees." +
           (extra ? " " + extra : "");
+      }
+
+      /* Frame debug dump — metadata only, NEVER the API key (or any URL
+         containing it). Built from S.frames/S.route primitives so the key
+         and blob URLs cannot leak in by accident. */
+      function numOrNull(v) {
+        return (typeof v === "number" && isFinite(v)) ? v : null;
+      }
+      function buildFrameDebugDump() {
+        var ppm = parseInt(frameRange.value, 10);
+        if (isNaN(ppm)) ppm = null;
+        var originLabel = ($("originInput").value || "").trim() || null;
+        var destLabel = ($("destInput").value || "").trim() || null;
+        var route = S.route || null;
+        var frames = S.frames.map(function (f, i) {
+          return {
+            index: i,
+            kind: f.kind || "route",
+            turnIndex: (f.turnIndex != null ? f.turnIndex : null),
+            requested: { lat: numOrNull(f.lat), lng: numOrNull(f.lng) },
+            distAlongRouteM: numOrNull(f.dist),
+            requestedHeadingDeg: numOrNull(f.heading),
+            finalHeadingDeg: numOrNull(f.finalHeading),
+            status: f.status || null,
+            panoId: f.panoId || null,
+            panoLocation: (f.panoLat != null && f.panoLng != null)
+              ? { lat: numOrNull(f.panoLat), lng: numOrNull(f.panoLng) } : null,
+            panoDate: f.date || null,
+            copyright: f.copyright || null,
+            streetViewSource: "outdoor"
+          };
+        });
+        return {
+          route: {
+            origin: originLabel,
+            destination: destLabel,
+            description: route ? (route.description || null) : null,
+            distanceMeters: route ? numOrNull(route.distanceMeters) : null,
+            distanceMiles: route ? Number((route.distanceMeters / 1609.344).toFixed(4)) : null,
+            durationSeconds: route ? numOrNull(route.durationSeconds) : null,
+            photosPerMile: ppm,
+            totalFrames: S.frames.length,
+            turnsCount: route && route.turns ? route.turns.length : Math.round(frames.filter(function (x) { return x.kind !== "route"; }).length / 3)
+          },
+          frames: frames
+        };
+      }
+
+      function fallbackCopyText(text) {
+        var ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        var ok = false;
+        try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+        document.body.removeChild(ta);
+        return ok;
+      }
+
+      var copyDebugBtnEl = $("copyDebugBtn");
+      if (copyDebugBtnEl) {
+        copyDebugBtnEl.addEventListener("click", function () {
+          var statusEl = $("copyDebugStatus");
+          function confirmCopied() {
+            if (!statusEl) return;
+            statusEl.textContent = "Copied";
+            statusEl.className = "copy-status ok";
+            setTimeout(function () {
+              if (statusEl.textContent === "Copied") {
+                statusEl.textContent = "";
+                statusEl.className = "copy-status";
+              }
+            }, 2600);
+          }
+          function confirmFailed() {
+            if (!statusEl) return;
+            statusEl.textContent = "Copy failed — clipboard unavailable in this browser.";
+            statusEl.className = "copy-status error";
+          }
+          if (!S.frames.length) {
+            if (statusEl) {
+              statusEl.textContent = "Load photos first.";
+              statusEl.className = "copy-status";
+            }
+            return;
+          }
+          var text = JSON.stringify(buildFrameDebugDump(), null, 2);
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(confirmCopied).catch(function () {
+              if (fallbackCopyText(text)) confirmCopied(); else confirmFailed();
+            });
+          } else if (fallbackCopyText(text)) {
+            confirmCopied();
+          } else {
+            confirmFailed();
+          }
+        });
       }
 
       function fetchFrames() {
@@ -1739,8 +1854,11 @@
 
       function fetchOne(i) {
         var f = S.frames[i];
+        // source=outdoor excludes indoor / business-interior panoramas,
+        // which otherwise get snapped to when the route passes a place.
         var metaUrl = "https://maps.googleapis.com/maps/api/streetview/metadata" +
           "?location=" + f.lat.toFixed(6) + "," + f.lng.toFixed(6) +
+          "&source=outdoor" +
           "&key=" + encodeURIComponent(S.key);
         return fetch(metaUrl).then(function (r) { return r.json(); }).then(function (meta) {
           if (!meta || meta.status !== "OK" || !meta.pano_id) {
@@ -1753,6 +1871,7 @@
           }
           f.panoId = meta.pano_id;
           f.date = meta.date || "";
+          f.copyright = meta.copyright || "";
           var panoLoc = null;
           if (meta.location && typeof meta.location.lat === "number" && typeof meta.location.lng === "number") {
             panoLoc = { lat: meta.location.lat, lng: meta.location.lng };
@@ -1765,7 +1884,7 @@
           var imgUrl = "https://maps.googleapis.com/maps/api/streetview" +
             "?size=640x360&pano=" + encodeURIComponent(meta.pano_id) +
             "&heading=" + Number(f.finalHeading).toFixed(1) +
-            "&pitch=0&fov=90&return_error_code=true" +
+            "&pitch=0&fov=90&return_error_code=true&source=outdoor" +
             "&key=" + encodeURIComponent(S.key);
           return fetch(imgUrl).then(function (r) {
             if (!r.ok) throw new Error("http " + r.status);
