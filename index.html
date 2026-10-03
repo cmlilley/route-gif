@@ -73,6 +73,32 @@
         align-items: start;
       }
       .col { display: grid; gap: 20px; }
+      /* Post-generation content (GIF preview, filmstrip, long field values)
+         must never force a column wider than its track: grid/flex children
+         default to min-width:auto and would otherwise overflow the track
+         and slide under the neighbouring column. */
+      .layout > .col,
+      .col > .card,
+      .card form,
+      .input-wrap,
+      .key-row,
+      .slider-row,
+      .delay-row,
+      .stats,
+      .actions,
+      .film-actions,
+      .film-grid,
+      .film-grid > .frame,
+      .gif-preview {
+        min-width: 0;
+      }
+      .card { min-width: 0; }
+      .delay-row select,
+      .slider-row input[type="range"],
+      .actions .btn,
+      .film-actions .btn {
+        min-width: 0;
+      }
       @media (max-width: 920px) {
         .layout { grid-template-columns: minmax(0, 1fr); }
         main { padding: 14px 12px 32px; }
@@ -117,6 +143,8 @@
       label.field-label:first-of-type { margin-top: 0; }
       input[type="text"], input[type="password"], select {
         width: 100%;
+        max-width: 100%;
+        min-width: 0;
         font: inherit;
         font-size: 0.95rem;
         color: var(--ink);
@@ -270,7 +298,7 @@
         overflow: hidden;
         background: var(--chip);
       }
-      .frame img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: var(--map-ph); }
+      .frame img { display: block; width: 100%; max-width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: var(--map-ph); }
       .frame figcaption {
         display: flex; justify-content: space-between; gap: 6px;
         padding: 4px 7px;
@@ -303,7 +331,7 @@
       #resultCard[hidden] { display: none; }
       .gif-preview { margin-top: 14px; text-align: center; }
       .gif-preview img {
-        max-width: 100%; width: 640px;
+        max-width: 100%; width: min(640px, 100%); height: auto;
         border-radius: 10px; border: 1px solid var(--line);
         background: var(--map-ph);
       }
