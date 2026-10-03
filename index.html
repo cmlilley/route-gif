@@ -126,13 +126,16 @@
         padding: 11px 12px;
         outline: none;
       }
-      input[type="text"]:focus, input[type="password"]:focus, select:focus {
+      input[type="text"]:focus, select:focus {
         border-color: var(--accent);
         box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
       }
       input[disabled], select[disabled] { opacity: 0.55; }
       .key-row { display: flex; gap: 8px; }
       .key-row input { flex: 1 1 auto; min-width: 0; }
+      /* The API key is a plain text input (never type="password", which
+         password managers can overwrite), masked visually instead. */
+      #keyInput.masked { -webkit-text-security: disc; text-security: disc; }
       .btn {
         font: inherit;
         font-weight: 700;
@@ -328,7 +331,7 @@
             </p>
             <label class="field-label" for="keyInput">Google Maps Platform API key</label>
             <div class="key-row">
-              <input id="keyInput" type="password" autocomplete="off" spellcheck="false"
+              <input id="keyInput" class="masked" type="text" name="gmaps-api-key-field" autocomplete="off" autocapitalize="off" spellcheck="false"
                      placeholder="Paste your API key" aria-describedby="keyStatus" />
               <button class="btn btn-ghost" id="keyToggle" type="button" aria-pressed="false">Show</button>
             </div>
@@ -516,8 +519,8 @@
       var keyInput = $("keyInput"), keyStatus = $("keyStatus"), connectBtn = $("connectBtn");
 
       $("keyToggle").addEventListener("click", function () {
-        var show = keyInput.type === "password";
-        keyInput.type = show ? "text" : "password";
+        var show = keyInput.classList.contains("masked");
+        keyInput.classList.toggle("masked", !show);
         this.textContent = show ? "Hide" : "Show";
         this.setAttribute("aria-pressed", show ? "true" : "false");
       });
@@ -532,7 +535,7 @@
       };
 
       connectBtn.addEventListener("click", function () {
-        var key = keyInput.value.trim();
+        var key = (keyInput.value || "").replace(/\s+/g, ""); // pasted keys often carry stray spaces/newlines
         if (!key) {
           setMsg(keyStatus, "Paste your Google Maps Platform API key first.", "error");
           $("keyCard").classList.remove("shake");
