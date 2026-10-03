@@ -50,12 +50,16 @@
           <!-- Step 2: Route -->
           <section class="card" id="routeCard" aria-labelledby="routeTitle">
             <h2 id="routeTitle"><span class="step-num">2</span>Plan the drive</h2>
-            <p class="sub">Driving directions from start to destination.</p>
+            <p class="sub">Driving directions from start to destination. Add up to 3 stops; if Google returns alternates, pick one below — switching clears fetched photos.</p>
             <form id="routeForm" novalidate>
               <label class="field-label" for="originInput">Start</label>
               <div class="input-wrap">
                 <input id="originInput" type="text" placeholder="e.g. Raleigh, NC" autocomplete="off" />
                 <ul class="suggest" id="originList" hidden role="listbox" aria-label="Start suggestions"></ul>
+              </div>
+              <div id="waypointsWrap"></div>
+              <div class="swap-row" style="justify-content:flex-start">
+                <button class="swap-btn" id="addWaypointBtn" type="button">+ Add stop (up to 3)</button>
               </div>
               <div class="swap-row">
                 <button class="swap-btn" id="swapBtn" type="button" title="Swap start and destination">
@@ -71,6 +75,7 @@
 
               <button class="btn btn-primary btn-block" id="routeBtn" type="submit">Get directions</button>
               <p class="msg info" id="routeStatus" aria-live="polite"></p>
+              <div class="alt-routes" id="altRoutes" hidden aria-label="Alternate routes"></div>
             </form>
             <div class="stats" id="routeStats" hidden>
               <div class="stat"><span class="k">Distance</span><span class="v" id="statDist">–</span></div>
@@ -110,8 +115,10 @@
               <div class="stat"><span class="k">GIF length</span><span class="v" id="statGif">–</span></div>
               <div class="stat"><span class="k">Est. GIF size</span><span class="v" id="statGifSize">–</span></div>
               <div class="stat"><span class="k">Spacing</span><span class="v" id="statSpace">–</span></div>
+              <div class="stat"><span class="k">Est. Street View cost</span><span class="v" id="statCost">–</span></div>
             </div>
-            <p class="hint" id="gifSizeNote">GIF size is an estimate for 640×360 frames (~95&nbsp;KB per frame encoded, including the duplicated last-frame hold). Actual size depends on scene detail. The last frame is held ~1s before looping.</p>
+            <p class="hint" id="costNote">Cost estimate uses $7 per 1,000 Street View Static image requests (published rate as of 2025, labelled as estimate). Metadata coverage checks are free; only accepted photos are billed.</p>
+            <p class="hint" id="gifSizeNote">GIF size is an estimate for 640×360 frames (~95&nbsp;KB per frame encoded, including first/last ~1s holds and ping-pong duplication when selected). Actual size depends on scene detail. Filtered frames try nudged points ±15m/±30m along the route first; consecutive same-pano duplicates are skipped in the GIF but stay in the filmstrip.</p>
           </section>
 
           <!-- Step 4: Frames -->
@@ -121,6 +128,7 @@
             <button class="btn btn-primary btn-block" id="fetchBtn" type="button" disabled>Load Street View photos</button>
             <div class="bar" id="fetchBar" hidden><i></i></div>
             <p class="msg info" id="fetchStatus" aria-live="polite">Get directions first, then load photos.</p>
+            <p class="msg info" id="staleWarning" aria-live="polite"></p>
             <button class="btn btn-ghost btn-block" id="cancelFetchBtn" type="button" hidden>Cancel loading</button>
           </section>
 
@@ -137,7 +145,31 @@
                 <option value="800">Very slow · 0.8s</option>
               </select>
             </div>
+            <div class="delay-row">
+              <label for="playbackSelect">Playback</label>
+              <select id="playbackSelect">
+                <option value="loop" selected>Loop (holds at both ends)</option>
+                <option value="pingpong">Ping-pong (forward then reverse)</option>
+              </select>
+            </div>
+            <div class="delay-row">
+              <label for="labelSelect">Label frames</label>
+              <select id="labelSelect">
+                <option value="on" selected>On — distance + turn markers</option>
+                <option value="off">Off</option>
+              </select>
+            </div>
+            <div class="delay-row">
+              <label for="firstHoldSelect">First-frame hold</label>
+              <select id="firstHoldSelect">
+                <option value="on" selected>On (~1s)</option>
+                <option value="off">Off</option>
+              </select>
+            </div>
             <button class="btn btn-primary btn-block" id="gifBtn" type="button" disabled>Generate GIF</button>
+            <div class="export-row">
+              <button class="btn btn-ghost" id="webmBtn" type="button" disabled>Generate WebM video</button>
+            </div>
             <div class="bar" id="gifBar" hidden><i></i></div>
             <p class="msg info" id="gifStatus" aria-live="polite">Load Street View photos first.</p>
           </section>
@@ -173,6 +205,7 @@
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m6 11 6 6 6-6"/><path d="M4 21h16"/></svg>
               Download route.gif
             </a>
+            <a class="btn btn-ghost download-btn" id="downloadWebmBtn" href="#" download="route.webm" hidden>Download WebM video</a>
             <p class="msg info file-meta" id="gifMeta"></p>
           </section>
 
