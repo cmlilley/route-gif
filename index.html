@@ -516,7 +516,8 @@
         cancelFetch: false,
         generating: false,
         gifUrl: null,
-        workerScriptUrl: null
+        workerScriptUrl: null,
+        _mapsLoadFinish: null // settles the in-flight Maps load (gm_authFailure rejects it)
       };
 
       function $(id) { return document.getElementById(id); }
@@ -550,6 +551,11 @@
 
       window.gm_authFailure = function () {
         S.mapsReady = false;
+        // If a Connect attempt is still in flight, fail it right away so
+        // the user sees this error on the FIRST click instead of the
+        // attempt hanging (or silently needing a second click).
+        if (S._mapsLoadFinish) S._mapsLoadFinish(new Error("auth"));
+        mapsLoadPromise = null; // a corrected key retries from scratch
         connectBtn.disabled = false;
         connectBtn.textContent = "Connect & load map";
         setMsg(keyStatus,
@@ -580,6 +586,9 @@
           initAutocomplete();
         }).catch(function (err) {
           S.mapsReady = false;
+          // Drop the cached (rejected) load promise so a later click
+          // re-attempts the load instead of replaying this failure.
+          if (!err || err.message !== "auth") mapsLoadPromise = null;
           connectBtn.disabled = false;
           connectBtn.textContent = "Connect & load map";
           if (err && err.message === "auth") return; // gm_authFailure already reported
@@ -589,31 +598,101 @@
         });
       });
 
-      function loadGoogleMaps(key) {
-        if (window.google && window.google.maps && window.google.maps.importLibrary) {
-          return Promise.resolve();
+      /* First-click fix. The Maps script is loaded with loading=async, so
+         the script tag's onload fires while the async bootstrap is still
+         wiring up importLibrary — and a Map constructed in that same
+         tick (or into a still-hidden container) fails to render. That
+         is why the first Connect click used to fail and the second one
+         worked (by then window.google was fully loaded). So: one shared
+         load promise for the whole page, resolved only once
+         importLibrary("maps") itself resolves, and the map construction
+         retries once internally — a valid key connects on click one. */
+      var mapsLoadPromise = null;
+
+      function waitMs(ms) {
+        return new Promise(function (resolve) { setTimeout(resolve, ms); });
+      }
+
+      function waitForMapsApi(attempt) {
+        if (window.google && window.google.maps &&
+            typeof window.google.maps.importLibrary === "function") {
+          // importLibrary existing is not proof the bootstrap finished:
+          // make the "maps" library itself resolve before continuing.
+          return window.google.maps.importLibrary("maps").then(function () { return true; });
         }
-        var url = "https://maps.googleapis.com/maps/api/js?key=" + encodeURIComponent(key) +
-                  "&v=weekly&loading=async";
-        return loadScript(url).then(function () {
-          if (!window.google || !window.google.maps) throw new Error("network");
+        if (attempt >= 50) return Promise.reject(new Error("network"));
+        return waitMs(100).then(function () { return waitForMapsApi(attempt + 1); });
+      }
+
+      function loadGoogleMaps(key) {
+        if (mapsLoadPromise) return mapsLoadPromise; // never inject the script twice
+        mapsLoadPromise = new Promise(function (resolve, reject) {
+          var settled = false;
+          function finish(err) {
+            if (settled) return;
+            settled = true;
+            S._mapsLoadFinish = null;
+            if (err) reject(err); else resolve();
+          }
+          // gm_authFailure (above) settles this promise immediately when
+          // Google refuses the key, instead of leaving the click hanging.
+          S._mapsLoadFinish = finish;
+          if (window.google && window.google.maps && window.google.maps.importLibrary) {
+            waitForMapsApi(0).then(function () { finish(); }, function (e) { finish(e); });
+            return;
+          }
+          var url = "https://maps.googleapis.com/maps/api/js?key=" + encodeURIComponent(key) +
+                    "&v=weekly&loading=async";
+          loadScript(url).then(function () {
+            return waitForMapsApi(0);
+          }).then(function () { finish(); }, function () { finish(new Error("network")); });
         });
+        return mapsLoadPromise;
       }
 
       function initMap() {
+        if (S.map) return Promise.resolve();
+        return createMap().catch(function () {
+          // Cold first-load race (bootstrap still settling, or the
+          // container had no layout yet): retry once internally so the
+          // user never has to click Connect a second time.
+          return waitMs(350).then(createMap);
+        });
+      }
+
+      function createMap() {
         return google.maps.importLibrary("maps").then(function (lib) {
-          $("mapPlaceholder").hidden = true;
           var mapEl = $("map");
+          $("mapPlaceholder").hidden = true;
           mapEl.hidden = false;
-          S.map = new lib.Map(mapEl, {
-            center: { lat: 39.5, lng: -98.35 },
-            zoom: 4,
-            mapId: "DEMO_MAP_ID",
-            mapTypeControl: false,
-            streetViewControl: false,
-            fullscreenControl: false
+          return new Promise(function (resolve, reject) {
+            // Give the just-unhidden container two frames to gain real
+            // dimensions before the Map measures it.
+            requestAnimationFrame(function () {
+              requestAnimationFrame(function () {
+                try {
+                  if (!mapEl.clientWidth || !mapEl.clientHeight) {
+                    throw new Error("Map container has no size yet.");
+                  }
+                  S.map = new lib.Map(mapEl, {
+                    center: { lat: 39.5, lng: -98.35 },
+                    zoom: 4,
+                    mapId: "DEMO_MAP_ID",
+                    mapTypeControl: false,
+                    streetViewControl: false,
+                    fullscreenControl: false
+                  });
+                  $("mapLegend").hidden = false;
+                  // The container was hidden until now — force a resize
+                  // so the tiles fill it on first paint.
+                  if (google.maps.event && google.maps.event.trigger) {
+                    google.maps.event.trigger(S.map, "resize");
+                  }
+                  resolve();
+                } catch (e) { reject(e); }
+              });
+            });
           });
-          $("mapLegend").hidden = false;
         });
       }
 
