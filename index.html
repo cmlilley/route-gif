@@ -243,6 +243,7 @@
       .dot.ok { background: var(--ok); }
       .dot.no { background: var(--bad); }
       .dot.pend { background: var(--muted); }
+      .dot.filt { background: #9aa7b3; }
       .dot.turn { background: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
 
       .bar {
@@ -461,6 +462,7 @@
               <span><i class="dot pend"></i>Route photo</span>
               <span><i class="dot turn"></i>Turn photo</span>
               <span><i class="dot ok"></i>Photo found</span>
+              <span><i class="dot filt"></i>Non-road pano (filtered)</span>
               <span><i class="dot no"></i>No Street View coverage</span>
             </div>
           </section>
@@ -1854,6 +1856,8 @@
         var isTurn = isTurnFrame(f);
         if (f.status === "ok") {
           c.setOptions({ fillColor: "#1e7f47", strokeColor: isTurn ? "#dd9200" : "#ffffff", strokeWeight: isTurn ? 2 : 1 });
+        } else if (f.status === "filtered") {
+          c.setOptions({ fillColor: "#9aa7b3", strokeColor: isTurn ? "#dd9200" : "#ffffff", strokeWeight: isTurn ? 2 : 1 });
         } else if (f.status === "nocov" || f.status === "error") {
           c.setOptions({ fillColor: "#c23737", strokeColor: isTurn ? "#dd9200" : "#ffffff", strokeWeight: isTurn ? 2 : 1 });
         } else {
@@ -1896,7 +1900,7 @@
             turnLat: s.turnLat, turnLng: s.turnLng, turnDist: s.turnDist, turnOffsetM: (s.turnOffsetM != null ? s.turnOffsetM : null),
             dist: s.dist,
             status: "pending",
-            panoId: null, date: "", copyright: "", blob: null, url: null
+            panoId: null, date: "", copyright: "", filteredReason: null, blob: null, url: null
           };
         });
         drawDots();
@@ -1993,10 +1997,11 @@
       }
 
       function updateFilmMeta(extra) {
-        var ok = 0, miss = 0, turnOk = 0, sectionCount = 0;
+        var ok = 0, miss = 0, filtered = 0, turnOk = 0, sectionCount = 0;
         S.frames.forEach(function (f) {
           if (f.kind === "section") sectionCount++;
           if (f.status === "ok") { ok++; if (isTurnFrame(f)) turnOk++; }
+          else if (f.status === "filtered") filtered++;
           else if (f.status === "nocov" || f.status === "error") miss++;
         });
         var turnTotal = S.frames.filter(function (f) { return isTurnFrame(f); }).length;
@@ -2004,6 +2009,7 @@
           ok + " photo" + (ok === 1 ? "" : "s") + " loaded" +
           (turnTotal ? " · " + turnOk + "/" + turnTotal + " turn photos" : "") +
           (sectionCount ? " · " + sectionCount + " between-turns" : "") +
+          (filtered ? " · " + filtered + " filtered as non-road" : "") +
           (miss ? " · " + miss + " without coverage" : "") +
           " of " + S.frames.length + " samples, in route order. INT = interstate, LOC = local; HDG is the camera heading in degrees." +
           (extra ? " " + extra : "");
@@ -2033,6 +2039,7 @@
             requestedHeadingDeg: numOrNull(f.heading),
             finalHeadingDeg: numOrNull(f.finalHeading),
             status: f.status || null,
+            filteredReason: f.filteredReason || null,
             panoId: f.panoId || null,
             panoLocation: (f.panoLat != null && f.panoLng != null)
               ? { lat: numOrNull(f.panoLat), lng: numOrNull(f.panoLng) } : null,
@@ -2128,15 +2135,27 @@
           $("cancelFetchBtn").hidden = true;
           fetchBar.hidden = true;
           updateFilmMeta();
+          var filteredCount = 0, missCount = 0;
+          S.frames.forEach(function (f) {
+            if (f.status === "filtered") filteredCount++;
+            else if (f.status === "nocov" || f.status === "error") missCount++;
+          });
+          var tail = filteredCount ?
+            " " + filteredCount + " frame" + (filteredCount === 1 ? " was" : "s were") +
+            " filtered as non-road (nearest panorama was user-contributed, not a Google road view):" +
+            " a frame shows as filtered rather than using that photo, since Street View returns only the nearest panorama." : "";
           if (S.cancelFetch) {
-            setMsg(fetchStatus, "Loading cancelled. " + okCount + " photo" + (okCount === 1 ? "" : "s") + " kept.", "info");
+            setMsg(fetchStatus, "Loading cancelled. " + okCount + " photo" + (okCount === 1 ? "" : "s") + " kept." + tail, "info");
           } else if (okCount === 0) {
             setMsg(fetchStatus,
-              "No Street View photos found along this route. The roads may not have coverage, or the Street View Static API is not enabled on this key.",
+              "No usable Street View photos along this route (" + filteredCount + " filtered as non-road, " + missCount + " with no coverage). The roads may not have official coverage, or the Street View Static API is not enabled on this key.",
               "error");
           } else {
             setMsg(fetchStatus,
-              okCount + " of " + total + " photos ready. Generate the GIF in step 5 — or adjust the sliders and reload for more/fewer frames.",
+              okCount + " photo" + (okCount === 1 ? "" : "s") + " ready" +
+              (filteredCount ? ", " + filteredCount + " filtered as non-road" : "") +
+              (missCount ? ", " + missCount + " no coverage" : "") +
+              " of " + total + ". Generate the GIF in step 5 — or adjust the sliders and reload for more/fewer frames." + tail,
               "ok");
           }
           $("gifBtn").disabled = okCount === 0;
@@ -2231,6 +2250,23 @@
           f.panoId = meta.pano_id;
           f.date = meta.date || "";
           f.copyright = meta.copyright || "";
+          /* Non-road filter. source=outdoor excludes indoor panoramas,
+             but Street View still snaps to the nearest OUTDOOR pano —
+             including user-contributed Photospheres (sidewalks, parks,
+             subway platforms, building interiors shot from outside),
+             which are not road frames. Official Google car panos carry
+             copyright "© Google…" and short opaque pano_ids; user
+             contributions carry the contributor's name in the copyright
+             and pano_ids starting with "CAo". Reject those before the
+             (billed) image download: when the only nearby pano is
+             user-contributed, this frame stays filtered rather than
+             showing a non-road photo. */
+          if (!/^© Google/.test(f.copyright) || String(f.panoId).indexOf("CAo") === 0) {
+            f.status = "filtered";
+            f.filteredReason = "user-contributed pano";
+            markFrameMissing(i, "non-road pano (filtered)");
+            return null;
+          }
           var panoLoc = null;
           if (meta.location && typeof meta.location.lat === "number" && typeof meta.location.lng === "number") {
             panoLoc = { lat: meta.location.lat, lng: meta.location.lng };
