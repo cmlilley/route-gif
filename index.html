@@ -383,6 +383,8 @@
             <div class="stats" id="routeStats" hidden>
               <div class="stat"><span class="k">Distance</span><span class="v" id="statDist">–</span></div>
               <div class="stat"><span class="k">Drive time</span><span class="v" id="statDur">–</span></div>
+              <div class="stat"><span class="k">Interstate</span><span class="v" id="statInterstate">–</span></div>
+              <div class="stat"><span class="k">Local</span><span class="v" id="statLocal">–</span></div>
               <div class="stat"><span class="k">Turns</span><span class="v" id="statTurns">–</span></div>
               <div class="stat"><span class="k">Est. photos</span><span class="v" id="statPhotos">–</span></div>
               <div class="stat"><span class="k">GIF length</span><span class="v" id="statGif">–</span></div>
@@ -390,17 +392,29 @@
             </div>
           </section>
 
-          <!-- Step 3: Photos per mile -->
+          <!-- Step 3: Photo sampling -->
           <section class="card" id="photosCard" aria-labelledby="photosTitle">
-            <h2 id="photosTitle"><span class="step-num">3</span>Photos per mile</h2>
-            <p class="sub">How densely to sample Street View photos along the route.</p>
-            <label class="field-label" for="frameRange">Photos per mile</label>
+            <h2 id="photosTitle"><span class="step-num">3</span>Photo sampling</h2>
+            <p class="sub">Set photo density for interstate and local stretches, plus how many photos to take at each turn.</p>
+            <label class="field-label" for="interstateRange">Interstate photos per mile</label>
             <div class="slider-row">
-              <input id="frameRange" type="range" min="1" max="100" step="1" value="5"
+              <input id="interstateRange" type="range" min="1" max="100" step="1" value="2"
                      aria-describedby="frameHint frameEstimate" />
-              <span class="slider-val" id="frameVal">5 / mi</span>
+              <span class="slider-val" id="interstateVal">2 / mi</span>
             </div>
-            <p class="hint" id="frameHint">Regular photos are spaced evenly along the route. Every turn also gets a before-turn, mid-turn, and after-turn photo, always included.</p>
+            <label class="field-label" for="localRange">Local streets photos per mile</label>
+            <div class="slider-row">
+              <input id="localRange" type="range" min="1" max="100" step="1" value="5"
+                     aria-describedby="frameHint frameEstimate" />
+              <span class="slider-val" id="localVal">5 / mi</span>
+            </div>
+            <label class="field-label" for="perTurnRange">Photos per turn</label>
+            <div class="slider-row">
+              <input id="perTurnRange" type="range" min="1" max="9" step="1" value="3"
+                     aria-describedby="frameHint frameEstimate" />
+              <span class="slider-val" id="perTurnVal">3 / turn</span>
+            </div>
+            <p class="hint" id="frameHint">Interstate and local stretches are sampled at their own rates, switching at the highway boundary. Turn photos are centred on each turn about 45&nbsp;m apart (3 = before / mid / after). At least one regular photo is always added between consecutive turns, even on very short stretches.</p>
             <p class="hint" id="frameEstimate" aria-live="polite">Get directions to see how many photos this will make.</p>
           </section>
 
@@ -445,7 +459,7 @@
             <div id="map" hidden></div>
             <div class="legend" id="mapLegend" hidden>
               <span><i class="dot pend"></i>Route photo</span>
-              <span><i class="dot turn"></i>Turn photo (before / mid / after)</span>
+              <span><i class="dot turn"></i>Turn photo</span>
               <span><i class="dot ok"></i>Photo found</span>
               <span><i class="dot no"></i>No Street View coverage</span>
             </div>
@@ -746,12 +760,29 @@
 
       /* ---------------- Step 2: routing ---------------- */
 
-      var frameRange = $("frameRange"), frameVal = $("frameVal");
-      frameRange.addEventListener("input", function () {
-        frameVal.textContent = frameRange.value + " / mi";
-        updateEstimateDisplay();
-        updateFetchBtn();
+      var interstateRange = $("interstateRange"), interstateVal = $("interstateVal");
+      var localRange = $("localRange"), localVal = $("localVal");
+      var perTurnRange = $("perTurnRange"), perTurnVal = $("perTurnVal");
+      function currentSamplingSettings() {
+        return {
+          interstatePpm: parseInt(interstateRange.value, 10) || 2,
+          localPpm: parseInt(localRange.value, 10) || 5,
+          perTurn: Math.max(1, Math.min(9, parseInt(perTurnRange.value, 10) || 3))
+        };
+      }
+      function syncSamplingLabels() {
+        interstateVal.textContent = interstateRange.value + " / mi";
+        localVal.textContent = localRange.value + " / mi";
+        perTurnVal.textContent = perTurnRange.value + " / turn";
+      }
+      [interstateRange, localRange, perTurnRange].forEach(function (el) {
+        el.addEventListener("input", function () {
+          syncSamplingLabels();
+          updateEstimateDisplay();
+          updateFetchBtn();
+        });
       });
+      syncSamplingLabels();
       $("delaySelect").addEventListener("change", function () {
         updateEstimateDisplay();
       });
@@ -797,7 +828,7 @@
           showRouteStats(route);
           updateFetchBtn();
           var turnNote = route.turns && route.turns.length ?
-            " " + route.turns.length + " turn" + (route.turns.length === 1 ? "" : "s") + " found — each gets a before + mid + after photo." : "";
+            " " + route.turns.length + " turn" + (route.turns.length === 1 ? "" : "s") + " found — each gets " + currentSamplingSettings().perTurn + " photo" + (currentSamplingSettings().perTurn === 1 ? "" : "s") + " centred on it." : "";
           setMsg($("routeStatus"),
             "Route found" + (route.description ? " via " + route.description : "") + "." + turnNote + " Now load the photos in step 4.",
             "ok");
@@ -885,6 +916,147 @@
         return out;
       }
 
+      function cleanStepText(value) {
+        return String(value == null ? "" : value)
+          .replace(/<[^>]*>/g, " ")
+          .replace(/&nbsp;/gi, " ")
+          .replace(/&amp;/gi, "&")
+          .replace(/\s+/g, " ")
+          .trim();
+      }
+      function stepPoint(step, which) {
+        if (!step) return null;
+        if (step.path && step.path.length) {
+          return toLatLngLiteral(which === "end" ? step.path[step.path.length - 1] : step.path[0]);
+        }
+        var candidates = which === "end"
+          ? [step.endLocation, step.end_location, step.endLatLng, step.end_lat_lng]
+          : [step.startLocation, step.start_location, step.startLatLng, step.start_lat_lng];
+        for (var i = 0; i < candidates.length; i++) {
+          var lit = toLatLngLiteral(candidates[i]);
+          if (lit) return lit;
+        }
+        return null;
+      }
+      function extractStepsFromDirectionsResult(result) {
+        var out = [];
+        try {
+          var r0 = result && result.routes && result.routes[0];
+          if (!r0) return out;
+          (r0.legs || []).forEach(function (leg) {
+            (leg.steps || []).forEach(function (step) {
+              out.push({
+                start: stepPoint(step, "start") || toLatLngLiteral(step.start_location),
+                end: stepPoint(step, "end") || toLatLngLiteral(step.end_location),
+                text: cleanStepText(step.instructions || step.html_instructions || ""),
+                maneuver: String(step.maneuver || "")
+              });
+            });
+          });
+        } catch (e) { /* ignore */ }
+        return out;
+      }
+      function extractStepsFromRoutesRoute(r) {
+        var out = [];
+        try {
+          var legs = (r && (r.legs || r.routeLegs)) || [];
+          legs.forEach(function (leg) {
+            var steps = leg.steps || leg.routeSteps || [];
+            steps.forEach(function (step) {
+              var nav = step.navigationInstruction || step.navigation_instruction || {};
+              out.push({
+                start: stepPoint(step, "start"),
+                end: stepPoint(step, "end"),
+                text: cleanStepText(nav.instructions || step.instructions || step.html_instructions || ""),
+                maneuver: String(nav.maneuver || step.maneuver || "")
+              });
+            });
+          });
+        } catch (e) { /* ignore */ }
+        return out;
+      }
+      /* Interstate vs local classification. State is carried along the
+         route: a merge/head/continue step that references an Interstate
+         (I-<number> or the word Interstate) switches the state on;
+         unnamed/continue steps that follow stay interstate. An
+         exit/ramp step onto another (non-interstate) road switches it
+         back to local. Anything unclassifiable defaults to local. */
+      function stepReferencesInterstate(text) {
+        return /\bi\s*-\s*\d+\b/i.test(text) || /\binterstate\b/i.test(text);
+      }
+      function classifyRouteSteps(rawSteps) {
+        var state = "local";
+        return (rawSteps || []).map(function (s) {
+          var text = cleanStepText((s.text || "") + " " + (s.maneuver || "").replace(/_/g, " "));
+          var isExitOrRamp = /\bexit\b|\bramp\b|\boff ramp\b/i.test(text + " " + String(s.maneuver || ""));
+          var onto = text.match(/\bonto\b(.+)$/i);
+          var cls;
+          if (state === "interstate" && isExitOrRamp) {
+            // Leaving the interstate: local unless the ramp leads
+            // onto another interstate.
+            cls = onto && stepReferencesInterstate(onto[1]) ? "interstate" : "local";
+            state = cls;
+          } else if (stepReferencesInterstate(text)) {
+            cls = "interstate";
+            state = "interstate";
+          } else {
+            cls = state;
+          }
+          return { start: s.start || null, end: s.end || null, text: text, maneuver: s.maneuver || "", roadClass: cls };
+        });
+      }
+      /* Build contiguous {startDist,endDist,roadClass} segments covering
+         the whole route from the classified steps. Step boundaries are
+         snapped onto the route path; adjacent stretches of the same
+         class merge. No usable step data -> one local segment. */
+      function buildRoadSegments(rawSteps, path, cum, total) {
+        if (!path.length || !(total > 0)) return [];
+        var classified = classifyRouteSteps(rawSteps).filter(function (s) { return s.start || s.end; });
+        if (!classified.length) return [{ startDist: 0, endDist: total, roadClass: "local" }];
+        var prevEnd = 0;
+        var starts = classified.map(function (s, i) {
+          var sd = s.start ? distAlongForPoint(path, cum, s.start) : prevEnd;
+          if (i === 0) sd = 0;
+          if (sd < prevEnd) sd = prevEnd;
+          if (sd > total) sd = total;
+          prevEnd = sd;
+          return { startDist: sd, roadClass: s.roadClass };
+        });
+        var segments = [];
+        starts.forEach(function (s, i) {
+          var end = (i + 1 < starts.length) ? starts[i + 1].startDist : total;
+          if (end <= s.startDist) return;
+          var last = segments[segments.length - 1];
+          if (last && last.roadClass === s.roadClass && Math.abs(last.endDist - s.startDist) < 0.01) {
+            last.endDist = end;
+          } else {
+            segments.push({ startDist: s.startDist, endDist: end, roadClass: s.roadClass });
+          }
+        });
+        if (!segments.length) return [{ startDist: 0, endDist: total, roadClass: "local" }];
+        segments[0].startDist = 0;
+        segments[segments.length - 1].endDist = total;
+        return segments;
+      }
+      function roadClassAtDist(route, dist) {
+        var segs = (route && route.segments) || [];
+        for (var i = 0; i < segs.length; i++) {
+          if (dist >= segs[i].startDist && dist <= segs[i].endDist) return segs[i].roadClass;
+        }
+        return segs.length ? segs[segs.length - 1].roadClass : "local";
+      }
+      function segmentMiles(route) {
+        var out = { interstate: 0, local: 0 };
+        ((route && route.segments) || []).forEach(function (s) {
+          var mi = Math.max(0, s.endDist - s.startDist) / MILE_M;
+          if (s.roadClass === "interstate") out.interstate += mi; else out.local += mi;
+        });
+        if (!route || !route.segments || !route.segments.length) {
+          out.local = route ? (route.distanceMeters || 0) / MILE_M : 0;
+        }
+        return out;
+      }
+
       /* New Routes library first; legacy DirectionsService as fallback for
          older projects where Routes API is not enabled. Turns come from
          every directions step boundary (see the extractors above), merged
@@ -895,10 +1067,11 @@
         return google.maps.importLibrary("routes").then(function (lib) {
           var Route = lib.Route, DirectionsService = lib.DirectionsService;
 
-          function finalize(path, distanceMeters, durationSeconds, description, viewport, turnsRaw) {
+          function finalize(path, distanceMeters, durationSeconds, description, viewport, turnsRaw, stepsRaw) {
             var cleanPath = (path || []).map(toLatLngLiteral).filter(Boolean);
             // geometry helpers are defined below but hoisted as function declarations
             var geom = buildCum(cleanPath);
+            var segments = buildRoadSegments(stepsRaw || [], cleanPath, geom.cum, geom.total);
             // Directions-derived turns are preserved independently:
             // processDirectionsTurns() never drops them for proximity
             // to the route start/end or to another directions turn.
@@ -930,14 +1103,15 @@
               durationSeconds: durationSeconds || 0,
               description: description || "",
               viewport: viewport || null,
-              turns: turns
+              turns: turns,
+              segments: segments
             };
             route._geom = geom;
             return route;
           }
 
-          function fetchDirectionsTurns() {
-            if (typeof DirectionsService !== "function") return Promise.resolve([]);
+          function fetchDirectionsData() {
+            if (typeof DirectionsService !== "function") return Promise.resolve({ turns: [], steps: [] });
             try {
               var svc = new DirectionsService();
               return svc.route({
@@ -945,9 +1119,12 @@
                 destination: destination,
                 travelMode: google.maps.TravelMode.DRIVING
               }).then(function (result) {
-                return extractTurnsFromDirectionsResult(result);
-              }).catch(function () { return []; });
-            } catch (e) { return Promise.resolve([]); }
+                return {
+                  turns: extractTurnsFromDirectionsResult(result),
+                  steps: extractStepsFromDirectionsResult(result)
+                };
+              }).catch(function () { return { turns: [], steps: [] }; });
+            } catch (e) { return Promise.resolve({ turns: [], steps: [] }); }
           }
 
           var newAttempt;
@@ -964,15 +1141,16 @@
               }
               var r = routes[0];
               var turnsRaw = extractTurnsFromRoutesRoute(r);
+              var stepsRaw = extractStepsFromRoutesRoute(r);
               var basePath = r.path;
               var distM = r.distanceMeters || 0;
               var durS = r.durationMillis ? r.durationMillis / 1000 : 0;
               if (turnsRaw.length) {
-                return finalize(basePath, distM, durS, r.description || "", r.viewport || null, turnsRaw);
+                return finalize(basePath, distM, durS, r.description || "", r.viewport || null, turnsRaw, stepsRaw);
               }
               // No turn data from Routes — try Directions just for its steps.
-              return fetchDirectionsTurns().then(function (secTurns) {
-                return finalize(basePath, distM, durS, r.description || "", r.viewport || null, secTurns);
+              return fetchDirectionsData().then(function (sec) {
+                return finalize(basePath, distM, durS, r.description || "", r.viewport || null, sec.turns, sec.steps.length ? sec.steps : stepsRaw);
               });
             });
           } else {
@@ -997,7 +1175,8 @@
                 if (leg.duration && leg.duration.value) dur += leg.duration.value;
               });
               var turnsRaw = extractTurnsFromDirectionsResult(result);
-              return finalize(r0.overview_path, dist, dur, r0.summary || "", null, turnsRaw);
+              var stepsRaw = extractStepsFromDirectionsResult(result);
+              return finalize(r0.overview_path, dist, dur, r0.summary || "", null, turnsRaw, stepsRaw);
             }).catch(function () { throw newErr; });
           });
         });
@@ -1064,19 +1243,26 @@
         var m = Math.floor(sec / 60), s = Math.round(sec % 60);
         return "≈ " + m + " min" + (s ? " " + s + " s" : "");
       }
-      function estimateForRoute(route, ppm) {
+      function estimateForRoute(route, settings) {
         if (!route || !route.path || !route.path.length) return null;
-        var samples = buildRouteSamples(route, ppm);
-        var routePhotos = 0, turnPhotos = 0;
-        samples.forEach(function (s) { if (s.kind === "route") routePhotos++; else turnPhotos++; });
-        var miles = route.distanceMeters / MILE_M;
-        var regularRaw = Math.max(2, Math.round(miles * ppm));
+        var samples = buildRouteSamples(route, settings);
+        var interstatePhotos = 0, localPhotos = 0, guaranteedPhotos = 0, turnPhotos = 0;
+        samples.forEach(function (s) {
+          if (s.kind === "section") guaranteedPhotos++;
+          else if (s.kind === "route") { if (s.roadClass === "interstate") interstatePhotos++; else localPhotos++; }
+          else turnPhotos++;
+        });
+        var segMi = segmentMiles(route);
         var delaySec = currentDelaySec();
         return {
-          miles: miles,
-          ppm: ppm,
-          regularRaw: regularRaw,
-          routePhotos: routePhotos,
+          miles: route.distanceMeters / MILE_M,
+          interstateMiles: segMi.interstate,
+          localMiles: segMi.local,
+          settings: settings,
+          interstatePhotos: interstatePhotos,
+          localPhotos: localPhotos,
+          guaranteedPhotos: guaranteedPhotos,
+          routePhotos: interstatePhotos + localPhotos,
           turnPhotos: turnPhotos,
           turns: (route.turns || []).length,
           total: samples.length,
@@ -1087,31 +1273,36 @@
       }
 
       function updateEstimateDisplay() {
-        var ppm = parseInt(frameRange.value, 10) || 5;
+        var settings = currentSamplingSettings();
         var estEl = $("frameEstimate");
         if (!S.route) {
-          if (estEl) estEl.textContent = "Get directions to see how many photos this will make — total = route miles × " + ppm + "/mi + 3 per turn.";
+          if (estEl) estEl.textContent = "Get directions to see how many photos this will make — interstate miles × " + settings.interstatePpm + "/mi + local miles × " + settings.localPpm + "/mi + one guaranteed photo between turns + " + settings.perTurn + " per turn.";
+          if ($("statInterstate")) $("statInterstate").textContent = "–";
+          if ($("statLocal")) $("statLocal").textContent = "–";
           if ($("statTurns")) $("statTurns").textContent = "–";
           if ($("statPhotos")) $("statPhotos").textContent = "–";
           if ($("statGif")) $("statGif").textContent = "–";
           if ($("statSpace")) $("statSpace").textContent = "–";
           return;
         }
-        var est = estimateForRoute(S.route, ppm);
+        var est = estimateForRoute(S.route, settings);
         if (!est) return;
         if (estEl) {
           var warn = est.total > 250 ? " That is a lot of billed photo requests and a large GIF — lower photos/mi for long routes." : "";
           estEl.textContent =
-            "≈ " + est.total + " photos · " + est.routePhotos + " route (" + est.miles.toFixed(2) + " mi × " + ppm + "/mi)" +
-            " + " + est.turnPhotos + " turn (" + est.turns + " turn" + (est.turns === 1 ? "" : "s") + " × 3, before + mid + after)" +
+            "≈ " + est.total + " photos · " + est.interstatePhotos + " interstate (" + est.interstateMiles.toFixed(2) + " mi × " + settings.interstatePpm + "/mi)" +
+            " + " + est.localPhotos + " local (" + est.localMiles.toFixed(2) + " mi × " + settings.localPpm + "/mi)" +
+            " + " + est.guaranteedPhotos + " between-turns" +
+            " + " + est.turnPhotos + " turn (" + est.turns + " turn" + (est.turns === 1 ? "" : "s") + " × " + settings.perTurn + ")" +
             " → " + fmtGifLength(est.gifSec) + " GIF at " + est.delaySec + "s/frame. Headings face the direction of travel; turn photos face into/through/out of each turn, snapped to each panorama." + warn;
         }
+        if ($("statInterstate")) $("statInterstate").textContent = est.interstateMiles.toFixed(2) + " mi · " + est.interstatePhotos + " photos";
+        if ($("statLocal")) $("statLocal").textContent = est.localMiles.toFixed(2) + " mi · " + est.localPhotos + " photos";
         if ($("statTurns")) $("statTurns").textContent = String(est.turns);
-        if ($("statPhotos")) $("statPhotos").textContent = "≈ " + est.total + " (" + est.routePhotos + " + " + est.turnPhotos + " turn)";
+        if ($("statPhotos")) $("statPhotos").textContent = "≈ " + est.total + " (" + est.interstatePhotos + " I + " + est.localPhotos + " L + " + est.guaranteedPhotos + " between + " + est.turnPhotos + " turn)";
         if ($("statGif")) $("statGif").textContent = fmtGifLength(est.gifSec) + " @ " + est.delaySec + "s";
         if ($("statSpace")) {
-          var spacingM = est.routePhotos > 1 ? (S.route.distanceMeters / Math.max(1, est.routePhotos - 1)) : S.route.distanceMeters;
-          $("statSpace").textContent = "≈ " + fmtDistance(spacingM) + " (" + ppm + "/mi)";
+          $("statSpace").textContent = "I " + settings.interstatePpm + "/mi · L " + settings.localPpm + "/mi · " + settings.perTurn + "/turn";
         }
       }
 
@@ -1359,55 +1550,91 @@
         return bearing(p, ahead);
       }
 
-      /* Build the full sample list: evenly spaced route photos at
-         `ppm` photos per mile PLUS, for every turn, a before-turn photo
-         (~45 m before, facing into the turn on the incoming road), a
-         mid-turn photo (at the turn point, facing through the turn toward
-         the outgoing leg), and an after-turn photo (~45 m after, facing
-         away on the outgoing road). Turn photos are always included
-         regardless of ppm. */
-      function buildRouteSamples(route, ppm) {
+      /* Build the full sample list:
+         - Regular photos are sampled WITHIN each classified stretch:
+           interstate segments at interstatePpm, local segments at
+           localPpm, so a density change takes effect exactly at the
+           highway boundary (plus a photo at each route endpoint).
+         - Every turn gets perTurn photos centred on the turn, ~45 m
+           apart: offsets (i - (N-1)/2) * 45 m, clamped to the route.
+           N=3 reproduces before(-45)/mid(0)/after(+45); negative
+           offsets face the incoming heading, zero faces through the
+           turn, positive offsets face the outgoing heading.
+         - Finally, the route is split into sections by consecutive
+           turns (start -> first turn, ..., last turn -> destination);
+           any section with NO regular photo strictly between its
+           boundaries gets one guaranteed photo at its midpoint
+           (kind "section"), regardless of ppm. Turn photos never
+           count as the between-turns photo.
+         Turn frames keep the strict-preservation dedupe: only an
+         exact duplicate (same turn, same kind, same distance) is
+         dropped, and only regular photos within ~14 m of a turn
+         photo are dropped — guaranteed "section" photos are added
+         after that dedupe, so they are never removed by it. */
+      function normalizeSamplingSettings(settings) {
+        if (typeof settings === "number") {
+          return { interstatePpm: settings, localPpm: settings, perTurn: 3 };
+        }
+        settings = settings || {};
+        return {
+          interstatePpm: Math.max(1, settings.interstatePpm || settings.localPpm || 5),
+          localPpm: Math.max(1, settings.localPpm || 5),
+          perTurn: Math.max(1, Math.min(9, settings.perTurn || 3))
+        };
+      }
+      function buildRouteSamples(route, settingsIn) {
         if (!route || !route.path || !route.path.length) return [];
+        var settings = normalizeSamplingSettings(settingsIn);
         var path = route.path;
         var geom = getRouteGeom(route);
         var cum = geom.cum, total = geom.total;
         if (total === 0 || path.length === 1) {
-          return [{ lat: path[0].lat, lng: path[0].lng, heading: 0, dist: 0, kind: "route", turnIndex: -1, turnLat: null, turnLng: null, turnDist: null }];
+          return [{ lat: path[0].lat, lng: path[0].lng, heading: 0, dist: 0, kind: "route", roadClass: "local", turnIndex: -1, turnLat: null, turnLng: null, turnDist: null, turnOffsetM: null }];
         }
-        var miles = (route.distanceMeters || total) / MILE_M;
-        var regularCount = Math.max(2, Math.round(miles * ppm));
         var candidates = [];
-        if (regularCount === 1) {
-          candidates.push({ dist: 0, kind: "route", turnIndex: -1 });
-        } else {
-          var spacing = total / (regularCount - 1);
-          for (var k = 0; k < regularCount; k++) {
-            candidates.push({ dist: spacing * k, kind: "route", turnIndex: -1 });
-          }
+        function addCandidate(dist, kind, ti, tLat, tLng, tDist, offsetM) {
+          dist = Math.max(0, Math.min(total, dist));
+          candidates.push({
+            dist: dist, kind: kind,
+            turnIndex: (ti != null ? ti : -1),
+            turnLat: (tLat != null ? tLat : null),
+            turnLng: (tLng != null ? tLng : null),
+            turnDist: (tDist != null ? tDist : null),
+            turnOffsetM: (offsetM != null ? offsetM : null),
+            roadClass: roadClassAtDist(route, dist)
+          });
         }
+        // Regular photos, sampled per classified segment.
+        var segments = (route.segments && route.segments.length)
+          ? route.segments
+          : [{ startDist: 0, endDist: total, roadClass: "local" }];
+        addCandidate(0, "route", -1);
+        segments.forEach(function (seg) {
+          var ppm = seg.roadClass === "interstate" ? settings.interstatePpm : settings.localPpm;
+          var spacing = MILE_M / ppm;
+          var len = seg.endDist - seg.startDist;
+          if (!(len > 0) || !(spacing > 0)) return;
+          for (var d = seg.startDist + spacing / 2; d < seg.endDist - spacing * 0.2; d += spacing) {
+            addCandidate(d, "route", -1);
+          }
+        });
+        addCandidate(total, "route", -1);
+        // Turn photos: perTurn positions centred on the turn.
         var turns = route.turns || [];
+        var n = settings.perTurn;
         turns.forEach(function (t, ti) {
-          var beforeDist = Math.max(0, Math.min(total, t.dist - TURN_OFFSET_M));
-          var afterDist = Math.max(0, Math.min(total, t.dist + TURN_OFFSET_M));
-          candidates.push({ dist: beforeDist, kind: "before-turn", turnIndex: ti, turnLat: t.lat, turnLng: t.lng, turnDist: t.dist });
-          candidates.push({ dist: Math.max(0, Math.min(total, t.dist)), kind: "mid-turn", turnIndex: ti, turnLat: t.lat, turnLng: t.lng, turnDist: t.dist });
-          candidates.push({ dist: afterDist, kind: "after-turn", turnIndex: ti, turnLat: t.lat, turnLng: t.lng, turnDist: t.dist });
+          for (var i = 0; i < n; i++) {
+            var offset = (i - (n - 1) / 2) * TURN_OFFSET_M;
+            var kind = offset < -0.001 ? "before-turn" : (offset > 0.001 ? "after-turn" : "mid-turn");
+            addCandidate(t.dist + offset, kind, ti, t.lat, t.lng, t.dist, offset);
+          }
         });
         candidates.sort(function (a, b) { return a.dist - b.dist; });
-        // Deduplication — narrow by design so required turn frames are
-        // never silently lost:
-        //  - a ROUTE (non-turn) sample is removed only if it falls
-        //    within ~14 m of a turn sample (the turn photo covers
-        //    that stretch of road);
-        //  - a turn sample is removed only if it is an exact duplicate
-        //    of an already-kept turn sample for the SAME turnIndex and
-        //    SAME kind (before/after) at the same distance.
-        // Distinct turn samples are always kept, even when <14 m
-        // apart: a before-turn photo for turn N and an after-turn
-        // photo for turn N-1 (or a before-turn for turn N+1) are
-        // separate required frames with different turn associations
-        // and headings. Route samples are not deduped against each
-        // other here.
+        // Dedupe: regular photo dropped only within ~14 m of a turn
+        // photo; turn photo dropped only on an exact duplicate
+        // (same turn + same kind + same distance, e.g. after clamping
+        // at a route endpoint). Regular photos are not deduped
+        // against each other.
         var turnCandidates = candidates.filter(function (c) { return c.kind !== "route"; });
         var kept = [];
         candidates.forEach(function (c) {
@@ -1431,6 +1658,35 @@
           if (isExactDup) return;
           kept.push(c);
         });
+        // At-least-one-between-turns guarantee (runs after dedupe, and
+        // guaranteed photos are never deduped away themselves).
+        var boundaries = [0];
+        turns.forEach(function (t) {
+          if (t.dist > 0 && t.dist < total) boundaries.push(t.dist);
+        });
+        boundaries.push(total);
+        boundaries = boundaries.filter(function (d, i) { return i === 0 || Math.abs(d - boundaries[i - 1]) > 0.01; });
+        for (var b = 0; b + 1 < boundaries.length; b++) {
+          var lo = boundaries[b], hi = boundaries[b + 1];
+          if (!(hi > lo)) continue;
+          var hasRegular = false;
+          for (var q = 0; q < kept.length; q++) {
+            var kc = kept[q];
+            if ((kc.kind === "route" || kc.kind === "section") && kc.dist > lo + 0.01 && kc.dist < hi - 0.01) {
+              hasRegular = true;
+              break;
+            }
+          }
+          if (!hasRegular) {
+            var midDist = (lo + hi) / 2;
+            kept.push({
+              dist: midDist, kind: "section",
+              turnIndex: -1, turnLat: null, turnLng: null, turnDist: null, turnOffsetM: null,
+              roadClass: roadClassAtDist(route, midDist)
+            });
+          }
+        }
+        kept.sort(function (a, b) { return a.dist - b.dist; });
         // Map to lat/lng + corner-safe heading
         return kept.map(function (c) {
           var p = pointAtDist(path, cum, total, c.dist);
@@ -1446,10 +1702,12 @@
           }
           return {
             lat: p.lat, lng: p.lng, heading: h, dist: c.dist,
-            kind: c.kind, turnIndex: (c.turnIndex != null ? c.turnIndex : -1),
+            kind: c.kind, roadClass: c.roadClass || roadClassAtDist(route, c.dist),
+            turnIndex: (c.turnIndex != null ? c.turnIndex : -1),
             turnLat: (c.turnLat != null ? c.turnLat : null),
             turnLng: (c.turnLng != null ? c.turnLng : null),
-            turnDist: (c.turnDist != null ? c.turnDist : null)
+            turnDist: (c.turnDist != null ? c.turnDist : null),
+            turnOffsetM: (c.turnOffsetM != null ? c.turnOffsetM : null)
           };
         });
       }
@@ -1476,10 +1734,9 @@
           fetchBtn.textContent = "Load Street View photos";
           return;
         }
-        var ppm = parseInt(frameRange.value, 10) || 5;
-        var est = estimateForRoute(S.route, ppm);
+        var est = estimateForRoute(S.route, currentSamplingSettings());
         if (est) {
-          fetchBtn.textContent = "Load ≈ " + est.total + " photos (" + est.routePhotos + " route + " + est.turnPhotos + " turn)";
+          fetchBtn.textContent = "Load ≈ " + est.total + " photos (" + est.interstatePhotos + " interstate + " + est.localPhotos + " local + " + est.guaranteedPhotos + " between + " + est.turnPhotos + " turn)";
         } else {
           fetchBtn.textContent = "Load Street View photos";
         }
@@ -1496,7 +1753,7 @@
         if (!S.map || !S.frames.length) return;
         var radius = S.route ? Math.min(400, Math.max(15, S.route.distanceMeters * 0.004)) : 60;
         S.frames.forEach(function (f) {
-          var isTurn = f.kind && f.kind !== "route";
+          var isTurn = isTurnFrame(f);
           var c = new google.maps.Circle({
             map: S.map,
             center: { lat: f.lat, lng: f.lng },
@@ -1515,7 +1772,7 @@
       function paintDot(i) {
         var c = S.dots[i], f = S.frames[i];
         if (!c || !f) return;
-        var isTurn = f.kind && f.kind !== "route";
+        var isTurn = isTurnFrame(f);
         if (f.status === "ok") {
           c.setOptions({ fillColor: "#1e7f47", strokeColor: isTurn ? "#dd9200" : "#ffffff", strokeWeight: isTurn ? 2 : 1 });
         } else if (f.status === "nocov" || f.status === "error") {
@@ -1549,16 +1806,15 @@
           return;
         }
         if (S.fetching) return;
-        var ppm = parseInt(frameRange.value, 10) || 5;
-        var samples = buildRouteSamples(S.route, ppm);
+        var samples = buildRouteSamples(S.route, currentSamplingSettings());
         invalidateFrames("");
         S.frames = samples.map(function (s) {
           return {
             lat: s.lat, lng: s.lng,
             panoLat: null, panoLng: null,
             heading: s.heading, finalHeading: s.heading,
-            kind: s.kind, turnIndex: s.turnIndex,
-            turnLat: s.turnLat, turnLng: s.turnLng, turnDist: s.turnDist,
+            kind: s.kind, roadClass: s.roadClass || "local", turnIndex: s.turnIndex,
+            turnLat: s.turnLat, turnLng: s.turnLng, turnDist: s.turnDist, turnOffsetM: (s.turnOffsetM != null ? s.turnOffsetM : null),
             dist: s.dist,
             status: "pending",
             panoId: null, date: "", copyright: "", blob: null, url: null
@@ -1585,7 +1841,16 @@
         if (f.kind === "before-turn") return "Before turn";
         if (f.kind === "mid-turn") return "Mid turn";
         if (f.kind === "after-turn") return "After turn";
+        if (f.kind === "section") return "Between turns";
         return "";
+      }
+      function isTurnFrame(f) {
+        return !!(f.kind && f.kind !== "route" && f.kind !== "section");
+      }
+      function frameMetaLabel(f) {
+        var cls = f.roadClass === "interstate" ? "INT" : "LOC";
+        var hdg = headingLabel(f);
+        return hdg ? cls + " · HDG " + hdg : cls;
       }
       function headingLabel(f) {
         var h = (f.finalHeading != null ? f.finalHeading : f.heading);
@@ -1596,7 +1861,8 @@
         var grid = $("filmGrid");
         grid.innerHTML = "";
         S.frames.forEach(function (f, i) {
-          var isTurn = f.kind && f.kind !== "route";
+          var isTurn = isTurnFrame(f);
+          var showTag = isTurn || f.kind === "section";
           var fig = document.createElement("figure");
           fig.className = "frame" + (isTurn ? " turn-frame" : "");
           fig.style.margin = "0";
@@ -1613,7 +1879,7 @@
           var num = document.createElement("span");
           num.textContent = "#" + (i + 1);
           left.appendChild(num);
-          if (isTurn) {
+          if (showTag) {
             var tag = document.createElement("span");
             tag.className = "tag";
             tag.textContent = kindLabel(f);
@@ -1621,8 +1887,8 @@
           }
           var mid = document.createElement("span");
           mid.className = "fhead";
-          mid.title = "Camera heading (direction of travel; turn photos face into/out of the turn, snapped to the panorama)";
-          mid.textContent = headingLabel(f) ? "HDG " + headingLabel(f) : "";
+          mid.title = "Road class (INT = interstate, LOC = local) and camera heading in degrees, snapped to the panorama";
+          mid.textContent = frameMetaLabel(f);
           var when = document.createElement("span");
           when.className = "fdate";
           cap.appendChild(left);
@@ -1643,23 +1909,24 @@
         var el = fig.querySelector(".fhead");
         var f = S.frames[i];
         if (el && f) {
-          var lbl = headingLabel(f);
-          el.textContent = lbl ? "HDG " + lbl : "";
+          el.textContent = frameMetaLabel(f);
         }
       }
 
       function updateFilmMeta(extra) {
-        var ok = 0, miss = 0, turnOk = 0;
+        var ok = 0, miss = 0, turnOk = 0, sectionCount = 0;
         S.frames.forEach(function (f) {
-          if (f.status === "ok") { ok++; if (f.kind && f.kind !== "route") turnOk++; }
+          if (f.kind === "section") sectionCount++;
+          if (f.status === "ok") { ok++; if (isTurnFrame(f)) turnOk++; }
           else if (f.status === "nocov" || f.status === "error") miss++;
         });
-        var turnTotal = S.frames.filter(function (f) { return f.kind && f.kind !== "route"; }).length;
+        var turnTotal = S.frames.filter(function (f) { return isTurnFrame(f); }).length;
         $("filmMeta").textContent =
           ok + " photo" + (ok === 1 ? "" : "s") + " loaded" +
           (turnTotal ? " · " + turnOk + "/" + turnTotal + " turn photos" : "") +
+          (sectionCount ? " · " + sectionCount + " between-turns" : "") +
           (miss ? " · " + miss + " without coverage" : "") +
-          " of " + S.frames.length + " samples, in route order. HDG is the camera heading in degrees." +
+          " of " + S.frames.length + " samples, in route order. INT = interstate, LOC = local; HDG is the camera heading in degrees." +
           (extra ? " " + extra : "");
       }
 
@@ -1670,16 +1937,18 @@
         return (typeof v === "number" && isFinite(v)) ? v : null;
       }
       function buildFrameDebugDump() {
-        var ppm = parseInt(frameRange.value, 10);
-        if (isNaN(ppm)) ppm = null;
+        var settings = currentSamplingSettings();
         var originLabel = ($("originInput").value || "").trim() || null;
         var destLabel = ($("destInput").value || "").trim() || null;
         var route = S.route || null;
+        var segMi = route ? segmentMiles(route) : { interstate: 0, local: 0 };
         var frames = S.frames.map(function (f, i) {
           return {
             index: i,
             kind: f.kind || "route",
+            roadClass: f.roadClass || "local",
             turnIndex: (f.turnIndex != null ? f.turnIndex : null),
+            turnOffsetM: (f.turnOffsetM != null ? numOrNull(f.turnOffsetM) : null),
             requested: { lat: numOrNull(f.lat), lng: numOrNull(f.lng) },
             distAlongRouteM: numOrNull(f.dist),
             requestedHeadingDeg: numOrNull(f.heading),
@@ -1700,10 +1969,17 @@
             description: route ? (route.description || null) : null,
             distanceMeters: route ? numOrNull(route.distanceMeters) : null,
             distanceMiles: route ? Number((route.distanceMeters / 1609.344).toFixed(4)) : null,
+            interstateMiles: route ? Number(segMi.interstate.toFixed(4)) : null,
+            localMiles: route ? Number(segMi.local.toFixed(4)) : null,
+            segments: route && route.segments ? route.segments.map(function (s) {
+              return { startDistM: numOrNull(s.startDist), endDistM: numOrNull(s.endDist), roadClass: s.roadClass };
+            }) : [],
             durationSeconds: route ? numOrNull(route.durationSeconds) : null,
-            photosPerMile: ppm,
+            interstatePhotosPerMile: settings.interstatePpm,
+            localPhotosPerMile: settings.localPpm,
+            photosPerTurn: settings.perTurn,
             totalFrames: S.frames.length,
-            turnsCount: route && route.turns ? route.turns.length : Math.round(frames.filter(function (x) { return x.kind !== "route"; }).length / 3)
+            turnsCount: route && route.turns ? route.turns.length : frames.filter(function (x) { return x.kind === "before-turn" || x.kind === "mid-turn" || x.kind === "after-turn"; }).length
           },
           frames: frames
         };
@@ -1781,7 +2057,7 @@
               "error");
           } else {
             setMsg(fetchStatus,
-              okCount + " of " + total + " photos ready. Generate the GIF in step 5 — or move the slider and reload for more/fewer frames.",
+              okCount + " of " + total + " photos ready. Generate the GIF in step 5 — or adjust the sliders and reload for more/fewer frames.",
               "ok");
           }
           $("gifBtn").disabled = okCount === 0;
@@ -1836,7 +2112,11 @@
           return f.heading; // midHeading, computed from the turn point toward the outgoing leg
         }
         if (f.kind === "after-turn" && f.turnDist != null) {
-          target = pointAtDist(path, cum, total, Math.min(total, f.turnDist + 70));
+          // Face ahead on the outgoing leg from wherever this turn
+          // photo sits (covers every positive per-turn offset, not
+          // just the classic +45 m one).
+          var aheadOfFrame = (f.dist != null ? f.dist : f.turnDist) + 55;
+          target = pointAtDist(path, cum, total, Math.min(total, Math.max(f.turnDist + 70, aheadOfFrame)));
           if (haversine(panoLoc, target) > 8) return bearing(panoLoc, target);
           return f.heading; // outgoingHeading, computed only from post-turn points
         }
@@ -1914,14 +2194,16 @@
         var fig = $("frame-" + i);
         if (!fig) return;
         var f = S.frames[i];
-        var isTurn = f.kind && f.kind !== "route";
+        var isTurn = isTurnFrame(f);
+        var showTag = isTurn || f.kind === "section";
         fig.className = "frame" + (isTurn ? " turn-frame" : "");
         fig.innerHTML = "";
         var img = document.createElement("img");
         img.src = f.url;
         var hdg = headingLabel(f);
         img.alt = "Street View photo " + (i + 1) + " of " + S.frames.length + " along the route" +
-          (isTurn ? " (" + kindLabel(f).toLowerCase() + ")" : "") +
+          (showTag ? " (" + kindLabel(f).toLowerCase() + ")" : "") +
+          ", " + (f.roadClass === "interstate" ? "interstate" : "local street") +
           (hdg ? ", heading " + hdg : "");
         img.loading = "lazy";
         fig.appendChild(img);
@@ -1933,7 +2215,7 @@
         var num = document.createElement("span");
         num.textContent = "#" + (i + 1);
         left.appendChild(num);
-        if (isTurn) {
+        if (showTag) {
           var tag = document.createElement("span");
           tag.className = "tag";
           tag.textContent = kindLabel(f);
@@ -1941,8 +2223,8 @@
         }
         var mid = document.createElement("span");
         mid.className = "fhead";
-        mid.title = "Camera heading snapped to the panorama location";
-        mid.textContent = hdg ? "HDG " + hdg : "";
+        mid.title = "Road class (INT = interstate, LOC = local) and camera heading, snapped to the panorama";
+        mid.textContent = frameMetaLabel(f);
         var when = document.createElement("span");
         when.textContent = f.date || "";
         cap.appendChild(left);
