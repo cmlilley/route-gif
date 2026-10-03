@@ -333,6 +333,47 @@
       .section-status { font-size: 0.8rem; color: var(--muted); width: 100%; min-height: 1.1em; }
       .section-status.ok { color: var(--ok); font-weight: 600; }
       .section-status.error { color: var(--bad); font-weight: 600; }
+      .section-progress {
+        flex: 1 1 100%;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 7px;
+        min-width: 0;
+      }
+      .section-progress-track {
+        flex: 1 1 auto;
+        height: 6px;
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--line) 55%, transparent);
+        border: 1px solid var(--line);
+        overflow: hidden;
+        min-width: 80px;
+      }
+      .section-progress-fill {
+        display: block;
+        height: 100%;
+        width: 0%;
+        border-radius: 999px;
+        background: var(--accent);
+        transition: width 0.25s ease;
+      }
+      .section-progress[data-state="done"] .section-progress-fill { background: var(--ok); }
+      .section-progress[data-state="incomplete"] .section-progress-fill { background: var(--bad); }
+      .section-progress[data-state="not-loaded"] .section-progress-fill { background: var(--muted); opacity: 0.45; }
+      .section-progress-label {
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        font-size: 0.73rem;
+        font-weight: 500;
+        line-height: 1.25;
+        color: var(--muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .section-progress[data-state="done"] .section-progress-label { color: var(--ok); font-weight: 600; }
+      .section-progress[data-state="incomplete"] .section-progress-label { color: var(--bad); font-weight: 600; }
+      .section-progress[data-state="loading"] .section-progress-label { color: var(--ink); }
       .section-empty { font-size: 0.84rem; color: var(--muted); padding: 8px 2px 2px; }
       .frame {
         border: 1px solid var(--line);
