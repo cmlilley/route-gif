@@ -369,15 +369,6 @@
                 <ul class="suggest" id="destList" hidden role="listbox" aria-label="Destination suggestions"></ul>
               </div>
 
-              <label class="field-label" for="frameRange">Photos per mile</label>
-              <div class="slider-row">
-                <input id="frameRange" type="range" min="1" max="20" step="1" value="5"
-                       aria-describedby="frameHint frameEstimate" />
-                <span class="slider-val" id="frameVal">5 / mi</span>
-              </div>
-              <p class="hint" id="frameHint">Regular photos are spaced evenly along the route. Every turn also gets a before-turn and after-turn photo, always included.</p>
-              <p class="hint" id="frameEstimate" aria-live="polite">Get directions to see how many photos this will make.</p>
-
               <button class="btn btn-primary btn-block" id="routeBtn" type="submit">Get directions</button>
               <p class="msg info" id="routeStatus" aria-live="polite"></p>
             </form>
@@ -391,9 +382,23 @@
             </div>
           </section>
 
-          <!-- Step 3: Frames -->
+          <!-- Step 3: Photos per mile -->
+          <section class="card" id="photosCard" aria-labelledby="photosTitle">
+            <h2 id="photosTitle"><span class="step-num">3</span>Photos per mile</h2>
+            <p class="sub">How densely to sample Street View photos along the route.</p>
+            <label class="field-label" for="frameRange">Photos per mile</label>
+            <div class="slider-row">
+              <input id="frameRange" type="range" min="1" max="20" step="1" value="5"
+                     aria-describedby="frameHint frameEstimate" />
+              <span class="slider-val" id="frameVal">5 / mi</span>
+            </div>
+            <p class="hint" id="frameHint">Regular photos are spaced evenly along the route. Every turn also gets a before-turn, mid-turn, and after-turn photo, always included.</p>
+            <p class="hint" id="frameEstimate" aria-live="polite">Get directions to see how many photos this will make.</p>
+          </section>
+
+          <!-- Step 4: Frames -->
           <section class="card" id="framesCard" aria-labelledby="framesTitle">
-            <h2 id="framesTitle"><span class="step-num">3</span>Street View frames</h2>
+            <h2 id="framesTitle"><span class="step-num">4</span>Street View frames</h2>
             <p class="sub">Checks each sample point for Street View coverage, then loads the photos facing the direction of travel.</p>
             <button class="btn btn-primary btn-block" id="fetchBtn" type="button" disabled>Load Street View photos</button>
             <div class="bar" id="fetchBar" hidden><i></i></div>
@@ -401,9 +406,9 @@
             <button class="btn btn-ghost btn-block" id="cancelFetchBtn" type="button" hidden>Cancel loading</button>
           </section>
 
-          <!-- Step 4: GIF -->
+          <!-- Step 5: GIF -->
           <section class="card" id="gifCard" aria-labelledby="gifTitle">
-            <h2 id="gifTitle"><span class="step-num">4</span>Make the GIF</h2>
+            <h2 id="gifTitle"><span class="step-num">5</span>Make the GIF</h2>
             <p class="sub">Stitches the loaded photos into a looping animated GIF, right here in the browser.</p>
             <div class="delay-row">
               <label for="delaySelect">Frame delay</label>
@@ -432,7 +437,7 @@
             <div id="map" hidden></div>
             <div class="legend" id="mapLegend" hidden>
               <span><i class="dot pend"></i>Route photo</span>
-              <span><i class="dot turn"></i>Turn photo (before / after)</span>
+              <span><i class="dot turn"></i>Turn photo (before / mid / after)</span>
               <span><i class="dot ok"></i>Photo found</span>
               <span><i class="dot no"></i>No Street View coverage</span>
             </div>
@@ -780,9 +785,9 @@
           showRouteStats(route);
           updateFetchBtn();
           var turnNote = route.turns && route.turns.length ?
-            " " + route.turns.length + " turn" + (route.turns.length === 1 ? "" : "s") + " found — each gets a before + after photo." : "";
+            " " + route.turns.length + " turn" + (route.turns.length === 1 ? "" : "s") + " found — each gets a before + mid + after photo." : "";
           setMsg($("routeStatus"),
-            "Route found" + (route.description ? " via " + route.description : "") + "." + turnNote + " Now load the photos in step 3.",
+            "Route found" + (route.description ? " via " + route.description : "") + "." + turnNote + " Now load the photos in step 4.",
             "ok");
           $("fetchBtn").disabled = false;
         }).catch(function (err) {
@@ -1073,7 +1078,7 @@
         var ppm = parseInt(frameRange.value, 10) || 5;
         var estEl = $("frameEstimate");
         if (!S.route) {
-          if (estEl) estEl.textContent = "Get directions to see how many photos this will make — total = route miles × " + ppm + "/mi + 2 per turn.";
+          if (estEl) estEl.textContent = "Get directions to see how many photos this will make — total = route miles × " + ppm + "/mi + 3 per turn.";
           if ($("statTurns")) $("statTurns").textContent = "–";
           if ($("statPhotos")) $("statPhotos").textContent = "–";
           if ($("statGif")) $("statGif").textContent = "–";
@@ -1086,8 +1091,8 @@
           var warn = est.total > 250 ? " That is a lot of billed photo requests and a large GIF — lower photos/mi for long routes." : "";
           estEl.textContent =
             "≈ " + est.total + " photos · " + est.routePhotos + " route (" + est.miles.toFixed(2) + " mi × " + ppm + "/mi)" +
-            " + " + est.turnPhotos + " turn (" + est.turns + " turn" + (est.turns === 1 ? "" : "s") + " × 2, before + after)" +
-            " → " + fmtGifLength(est.gifSec) + " GIF at " + est.delaySec + "s/frame. Headings face the direction of travel; turn photos face into/out of each turn, snapped to each panorama." + warn;
+            " + " + est.turnPhotos + " turn (" + est.turns + " turn" + (est.turns === 1 ? "" : "s") + " × 3, before + mid + after)" +
+            " → " + fmtGifLength(est.gifSec) + " GIF at " + est.delaySec + "s/frame. Headings face the direction of travel; turn photos face into/through/out of each turn, snapped to each panorama." + warn;
         }
         if ($("statTurns")) $("statTurns").textContent = String(est.turns);
         if ($("statPhotos")) $("statPhotos").textContent = "≈ " + est.total + " (" + est.routePhotos + " + " + est.turnPhotos + " turn)";
@@ -1296,6 +1301,15 @@
         }
         return bearing(a, b);
       }
+      function midHeading(path, cum, total, turnDist) {
+        var a = pointAtDist(path, cum, total, Math.max(0, Math.min(total, turnDist)));
+        var b = pointAtDist(path, cum, total, Math.min(total, turnDist + 30));
+        if (haversine(a, b) < 3) {
+          b = pointAtDist(path, cum, total, Math.min(total, turnDist + 60));
+        }
+        if (haversine(a, b) < 3) return outgoingHeading(path, cum, total, turnDist);
+        return bearing(a, b);
+      }
       function outgoingHeading(path, cum, total, turnDist) {
         var a = pointAtDist(path, cum, total, Math.min(total, turnDist + 2));
         var b = pointAtDist(path, cum, total, Math.min(total, turnDist + 55));
@@ -1335,9 +1349,11 @@
 
       /* Build the full sample list: evenly spaced route photos at
          `ppm` photos per mile PLUS, for every turn, a before-turn photo
-         (~45 m before, facing into the turn on the incoming road) and an
-         after-turn photo (~45 m after, facing away on the outgoing road).
-         Turn photos are always included regardless of ppm. */
+         (~45 m before, facing into the turn on the incoming road), a
+         mid-turn photo (at the turn point, facing through the turn toward
+         the outgoing leg), and an after-turn photo (~45 m after, facing
+         away on the outgoing road). Turn photos are always included
+         regardless of ppm. */
       function buildRouteSamples(route, ppm) {
         if (!route || !route.path || !route.path.length) return [];
         var path = route.path;
@@ -1362,6 +1378,7 @@
           var beforeDist = Math.max(0, Math.min(total, t.dist - TURN_OFFSET_M));
           var afterDist = Math.max(0, Math.min(total, t.dist + TURN_OFFSET_M));
           candidates.push({ dist: beforeDist, kind: "before-turn", turnIndex: ti, turnLat: t.lat, turnLng: t.lng, turnDist: t.dist });
+          candidates.push({ dist: Math.max(0, Math.min(total, t.dist)), kind: "mid-turn", turnIndex: ti, turnLat: t.lat, turnLng: t.lng, turnDist: t.dist });
           candidates.push({ dist: afterDist, kind: "after-turn", turnIndex: ti, turnLat: t.lat, turnLng: t.lng, turnDist: t.dist });
         });
         candidates.sort(function (a, b) { return a.dist - b.dist; });
@@ -1408,6 +1425,8 @@
           var h;
           if (c.kind === "before-turn" && c.turnDist != null) {
             h = incomingHeading(path, cum, total, c.turnDist);
+          } else if (c.kind === "mid-turn" && c.turnDist != null) {
+            h = midHeading(path, cum, total, c.turnDist);
           } else if (c.kind === "after-turn" && c.turnDist != null) {
             h = outgoingHeading(path, cum, total, c.turnDist);
           } else {
@@ -1436,7 +1455,7 @@
         return buildRouteSamples(shim, ppm);
       }
 
-      /* ---------------- Step 3: Street View metadata + images ---------------- */
+      /* ---------------- Step 4: Street View metadata + images ---------------- */
 
       var fetchBtn = $("fetchBtn"), fetchStatus = $("fetchStatus"), fetchBar = $("fetchBar");
 
@@ -1548,6 +1567,7 @@
 
       function kindLabel(f) {
         if (f.kind === "before-turn") return "Before turn";
+        if (f.kind === "mid-turn") return "Mid turn";
         if (f.kind === "after-turn") return "After turn";
         return "";
       }
@@ -1643,7 +1663,7 @@
               "error");
           } else {
             setMsg(fetchStatus,
-              okCount + " of " + total + " photos ready. Generate the GIF in step 4 — or move the slider and reload for more/fewer frames.",
+              okCount + " of " + total + " photos ready. Generate the GIF in step 5 — or move the slider and reload for more/fewer frames.",
               "ok");
           }
           $("gifBtn").disabled = okCount === 0;
@@ -1691,6 +1711,11 @@
           target = { lat: f.turnLat, lng: f.turnLng };
           if (haversine(panoLoc, target) > 8) return bearing(panoLoc, target);
           return f.heading; // incomingHeading, computed only from pre-turn points
+        }
+        if (f.kind === "mid-turn" && f.turnDist != null) {
+          target = pointAtDist(path, cum, total, Math.min(total, f.turnDist + 30));
+          if (haversine(panoLoc, target) > 8) return bearing(panoLoc, target);
+          return f.heading; // midHeading, computed from the turn point toward the outgoing leg
         }
         if (f.kind === "after-turn" && f.turnDist != null) {
           target = pointAtDist(path, cum, total, Math.min(total, f.turnDist + 70));
@@ -1812,7 +1837,7 @@
         if (slot) slot.textContent = label;
       }
 
-      /* ---------------- Step 4: GIF encoding (gif.js) ---------------- */
+      /* ---------------- Step 5: GIF encoding (gif.js) ---------------- */
 
       var gifBtn = $("gifBtn"), gifStatus = $("gifStatus"), gifBar = $("gifBar");
       var GIF_LIB = "https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.min.js";
